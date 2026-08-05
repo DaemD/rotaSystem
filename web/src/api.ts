@@ -161,6 +161,9 @@ export const requestLeave = (
   body: { leave_type: "annual_leave" | "sick"; start_date: string; end_date: string; note?: string },
 ) => request<LeaveRecord>("/me/leave", { method: "POST", body: JSON.stringify(body) }, token);
 
+export const deleteLeave = (token: string, id: string) =>
+  request<void>(`/me/leave/${id}`, { method: "DELETE" }, token);
+
 export const sendMessage = (token: string, text: string) =>
   request<Message>("/me/messages", { method: "POST", body: JSON.stringify({ text }) }, token);
 

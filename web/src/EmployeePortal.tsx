@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   clockIn,
   clockOut,
+  deleteLeave,
   getLeave,
   getMessages,
   getSchedule,
@@ -59,6 +60,24 @@ export default function EmployeePortal({ token, me, onLogout }: Props) {
   );
   const activeNav = NAV.find((n) => n.id === tab)!;
 
+  function showError(message: string) {
+    setError(message);
+  }
+
+  function clearError() {
+    setError("");
+  }
+
+  useEffect(() => {
+    if (!error) return;
+    const t = window.setTimeout(clearError, 8000);
+    return () => window.clearTimeout(t);
+  }, [error]);
+
+  useEffect(() => {
+    clearError();
+  }, [tab]);
+
   async function refresh() {
     const [s, sch, lv, msgs, types] = await Promise.all([
       getSummary(token),
@@ -79,31 +98,41 @@ export default function EmployeePortal({ token, me, onLogout }: Props) {
   }
 
   useEffect(() => {
-    refresh().catch((e) => setError(String(e.message || e)));
+    refresh().catch((e) => showError(String(e.message || e)));
   }, [token]);
 
   async function onClock() {
     if (!shiftType) return;
-    setError("");
+    clearError();
     try {
       if (clockedIn) await clockOut(token);
       else await clockIn(token, shiftType);
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Clock action failed");
+      showError(err instanceof Error ? err.message : "Clock action failed");
     }
   }
 
   async function onLeave(e: React.FormEvent) {
     e.preventDefault();
-    setError("");
+    clearError();
     try {
       await requestLeave(token, leaveForm);
       setLeaveForm({ leave_type: "annual_leave", start_date: "", end_date: "", note: "" });
       await refresh();
       setTab("leave");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Leave request failed");
+      showError(err instanceof Error ? err.message : "Leave request failed");
+    }
+  }
+
+  async function onDeleteLeave(id: string) {
+    clearError();
+    try {
+      await deleteLeave(token, id);
+      await refresh();
+    } catch (err) {
+      showError(err instanceof Error ? err.message : "Could not delete leave");
     }
   }
 
@@ -115,7 +144,7 @@ export default function EmployeePortal({ token, me, onLogout }: Props) {
       setMsgText("");
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Send failed");
+      showError(err instanceof Error ? err.message : "Send failed");
     }
   }
 
@@ -169,7 +198,14 @@ export default function EmployeePortal({ token, me, onLogout }: Props) {
           </span>
         </header>
 
-        {error && <div className="alert error page-alert">{error}</div>}
+        {error && (
+          <div className="alert error page-alert" role="alert">
+            <span>{error}</span>
+            <button type="button" className="alert-close" onClick={clearError} aria-label="Dismiss">
+              ×
+            </button>
+          </div>
+        )}
 
         <div className="content">
           {tab === "home" && summary && (
@@ -298,7 +334,9 @@ export default function EmployeePortal({ token, me, onLogout }: Props) {
                 <div className="panel-head">
                   <div>
                     <h2>New leave request</h2>
-                    <p className="muted">Submit annual leave or sick leave.</p>
+                    <p className="muted">
+                      Blocked if you already have leave or clocked in on those days. Delete old leave first if needed.
+                    </p>
                   </div>
                 </div>
                 <div className="form-grid">
@@ -354,7 +392,7 @@ export default function EmployeePortal({ token, me, onLogout }: Props) {
                 <div className="panel-head">
                   <div>
                     <h2>Request history</h2>
-                    <p className="muted">From the database</p>
+                    <p className="muted">Delete a request before submitting a replacement.</p>
                   </div>
                 </div>
                 {leave.length === 0 ? (
@@ -370,6 +408,7 @@ export default function EmployeePortal({ token, me, onLogout }: Props) {
                           <th>From</th>
                           <th>To</th>
                           <th>Status</th>
+                          <th />
                         </tr>
                       </thead>
                       <tbody>
@@ -380,6 +419,19 @@ export default function EmployeePortal({ token, me, onLogout }: Props) {
                             <td>{fmtDate(l.end_date)}</td>
                             <td>
                               <span className={statusClass(l.status)}>{l.status}</span>
+                            </td>
+                            <td>
+                              {l.status !== "taken" ? (
+                                <button
+                                  type="button"
+                                  className="btn danger sm-btn"
+                                  onClick={() => onDeleteLeave(l.id)}
+                                >
+                                  Delete
+                                </button>
+                              ) : (
+                                "—"
+                              )}
                             </td>
                           </tr>
                         ))}

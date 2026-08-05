@@ -1,4 +1,6 @@
 from datetime import date, datetime, timedelta, timezone
+from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session, joinedload
@@ -33,6 +35,15 @@ from app.schemas import (
 )
 
 router = APIRouter()
+UK_TZ = ZoneInfo("Europe/London")
+
+
+def _today_uk() -> date:
+    return datetime.now(UK_TZ).date()
+
+
+def _now_utc() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 def _monday(d: date) -> date:
@@ -196,8 +207,27 @@ def clock_in(
     if body.shift_type in (ShiftTypeCode.annual_leave, ShiftTypeCode.sick):
         raise HTTPException(status_code=400, detail="Use leave request for annual leave / sick")
 
-    now = datetime.now(timezone.utc)
-    today = now.date()
+    today = _today_uk()
+    leave_today = (
+        db.query(LeaveRecord)
+        .filter(
+            LeaveRecord.employee_id == current.id,
+            LeaveRecord.start_date <= today,
+            LeaveRecord.end_date >= today,
+            LeaveRecord.status.in_([LeaveStatus.pending, LeaveStatus.approved, LeaveStatus.taken]),
+        )
+        .first()
+    )
+    if leave_today:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"You have {leave_today.leave_type.value.replace('_', ' ')} "
+                f"({leave_today.status.value}) covering today. Cancel that leave before clocking in."
+            ),
+        )
+
+    now = _now_utc()
     scheduled = (
         db.query(ScheduledShift)
         .filter(
@@ -209,7 +239,7 @@ def clock_in(
     )
     lateness = 0
     if scheduled:
-        scheduled_dt = datetime.combine(today, scheduled.start_time, tzinfo=timezone.utc)
+        scheduled_dt = datetime.combine(today, scheduled.start_time, tzinfo=UK_TZ).astimezone(timezone.utc)
         lateness = max(0, int((now - scheduled_dt).total_seconds() // 60))
 
     ev = ClockEvent(
@@ -244,7 +274,7 @@ def clock_out(
     )
     if not open_ev:
         raise HTTPException(status_code=400, detail="Not clocked in")
-    open_ev.clock_out_at = datetime.now(timezone.utc)
+    open_ev.clock_out_at = _now_utc()
     db.commit()
     db.refresh(open_ev)
     return _clock_out(open_ev)
@@ -275,6 +305,58 @@ def request_leave(
 ) -> LeaveRecord:
     if body.end_date < body.start_date:
         raise HTTPException(status_code=400, detail="end_date must be on or after start_date")
+
+    today = _today_uk()
+    if body.end_date < today:
+        raise HTTPException(status_code=400, detail="Cannot request leave for dates entirely in the past")
+
+    # Overlapping leave already exists?
+    overlapping = (
+        db.query(LeaveRecord)
+        .filter(
+            LeaveRecord.employee_id == current.id,
+            LeaveRecord.start_date <= body.end_date,
+            LeaveRecord.end_date >= body.start_date,
+            LeaveRecord.status.in_([LeaveStatus.pending, LeaveStatus.approved, LeaveStatus.taken]),
+        )
+        .first()
+    )
+    if overlapping:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"You already have {overlapping.leave_type.value.replace('_', ' ')} "
+                f"({overlapping.status.value}) from {overlapping.start_date} to {overlapping.end_date}. "
+                "Delete that leave request first, then submit a new one."
+            ),
+        )
+
+    # Already clocked in / worked any day in the range?
+    day = body.start_date
+    while day <= body.end_date:
+        start_dt = datetime.combine(day, datetime.min.time(), tzinfo=UK_TZ).astimezone(timezone.utc)
+        end_dt = datetime.combine(day + timedelta(days=1), datetime.min.time(), tzinfo=UK_TZ).astimezone(
+            timezone.utc
+        )
+        clocked = (
+            db.query(ClockEvent)
+            .filter(
+                ClockEvent.employee_id == current.id,
+                ClockEvent.clock_in_at >= start_dt,
+                ClockEvent.clock_in_at < end_dt,
+            )
+            .first()
+        )
+        if clocked:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"You already clocked in on {day}. "
+                    "Leave cannot be requested for a day you have already worked."
+                ),
+            )
+        day += timedelta(days=1)
+
     rec = LeaveRecord(
         employee_id=current.id,
         leave_type=body.leave_type,
@@ -287,6 +369,28 @@ def request_leave(
     db.commit()
     db.refresh(rec)
     return rec
+
+
+@router.delete("/me/leave/{leave_id}", status_code=204, tags=["Leave"])
+def delete_leave(
+    leave_id: UUID,
+    db: Session = Depends(get_db),
+    current: Employee = Depends(require_employee),
+) -> None:
+    rec = (
+        db.query(LeaveRecord)
+        .filter(LeaveRecord.id == leave_id, LeaveRecord.employee_id == current.id)
+        .first()
+    )
+    if not rec:
+        raise HTTPException(status_code=404, detail="Leave request not found")
+    if rec.status == LeaveStatus.taken:
+        raise HTTPException(status_code=400, detail="Cannot delete leave marked as taken")
+    # pending / rejected always deletable; approved only if not fully in the past
+    if rec.status == LeaveStatus.approved and rec.end_date < _today_uk():
+        raise HTTPException(status_code=400, detail="Cannot delete past approved leave")
+    db.delete(rec)
+    db.commit()
 
 
 @router.get("/me/leave", response_model=list[LeaveOut], tags=["Leave"])
