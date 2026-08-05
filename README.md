@@ -25,19 +25,14 @@ npm install
 npm run dev
 ```
 
-## First-time accounts
-No demo users are seeded. Register via the UI or Swagger:
+## Accounts
+Public registration is disabled.
 
-1. `POST /auth/register` — create a **manager**
-2. `POST /auth/register` — create an **employee**
-3. `POST /auth/login` → Authorize with the token
+**Hardcoded manager** (seeded on API start):
+- Email: `manager@supreme.com`
+- Password: `Manager@123`
 
-Role routes the UI automatically:
-- `employee` → employee portal
-- `manager` / `admin` → manager CRM
+Override with env vars if needed: `MANAGER_EMAIL`, `MANAGER_PASSWORD`, `MANAGER_NAME`.
 
-### Manager APIs (`/admin/...`)
-Overview, live attendance, employees, leave approve/reject, manual rota shifts, messages/broadcast, force clock-out.
-
-Only shift-type lookup rows are auto-created. Schedule, leave, clock events, and messages are empty until created through the API.
+Managers create employee accounts from **Employees → Add employee**. Employees can only sign in.
 

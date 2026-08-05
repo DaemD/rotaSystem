@@ -3,12 +3,11 @@ from datetime import date, datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session, joinedload
 
-from app.auth import authenticate_employee, create_access_token, hash_password
+from app.auth import authenticate_employee, create_access_token
 from app.database import get_db
 from app.deps import require_employee
 from app.models import (
     ClockEvent,
-    ContractType,
     Employee,
     LeaveRecord,
     LeaveStatus,
@@ -27,7 +26,6 @@ from app.schemas import (
     LoginIn,
     MessageCreateIn,
     MessageOut,
-    RegisterIn,
     ScheduledShiftOut,
     ShiftTypeOut,
     TokenOut,
@@ -68,30 +66,9 @@ def _get_manager(db: Session) -> Employee:
     if not mgr:
         raise HTTPException(
             status_code=400,
-            detail="No manager account yet. Register a manager via POST /auth/register first.",
+            detail="No manager account configured.",
         )
     return mgr
-
-
-@router.post("/auth/register", response_model=EmployeeOut, status_code=201, tags=["Auth"])
-def register(body: RegisterIn, db: Session = Depends(get_db)) -> Employee:
-    email = body.email.strip().lower()
-    if db.query(Employee).filter(Employee.email == email).first():
-        raise HTTPException(status_code=400, detail="Email already registered")
-    if body.role not in (Role.employee, Role.manager):
-        raise HTTPException(status_code=400, detail="Role must be employee or manager")
-    emp = Employee(
-        email=email,
-        password_hash=hash_password(body.password),
-        full_name=body.full_name.strip(),
-        role=body.role,
-        contract_type=ContractType.full_time,
-        max_weekly_hours=40,
-    )
-    db.add(emp)
-    db.commit()
-    db.refresh(emp)
-    return emp
 
 
 @router.post("/auth/login", response_model=TokenOut, tags=["Auth"])
@@ -339,7 +316,7 @@ def my_messages(
     if not mgr_ids:
         raise HTTPException(
             status_code=400,
-            detail="No manager account yet. Register a manager via POST /auth/register first.",
+            detail="No manager account configured.",
         )
     rows = (
         db.query(Message)

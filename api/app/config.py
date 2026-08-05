@@ -17,8 +17,12 @@ class Settings(BaseSettings):
     secret_key: str = "dev-secret-key-change-in-prod"
     access_token_expire_minutes: int = 480
     algorithm: str = "HS256"
-    # Railway injects PORT
     port: int = 8000
+
+    # Hardcoded manager bootstrap (override via env in production if desired)
+    manager_email: str = "manager@supreme.com"
+    manager_password: str = "Manager@123"
+    manager_name: str = "Site Manager"
 
     def sqlalchemy_url(self) -> str:
         return normalize_database_url(self.database_url)

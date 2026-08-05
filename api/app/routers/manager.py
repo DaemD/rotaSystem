@@ -5,10 +5,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session, joinedload
 
+from app.auth import hash_password
 from app.database import get_db
 from app.deps import require_manager
 from app.models import (
     ClockEvent,
+    ContractType,
     Employee,
     LeaveRecord,
     LeaveStatus,
@@ -24,6 +26,7 @@ from app.schemas import (
     AdminClockOutIn,
     BroadcastIn,
     ClockEventOut,
+    CreateEmployeeIn,
     EmployeeOut,
     LeaveDecisionIn,
     LeaveOut,
@@ -168,6 +171,34 @@ def list_employees(
         .order_by(Employee.full_name.asc())
         .all()
     )
+
+
+@router.post("/employees", response_model=EmployeeOut, status_code=201)
+def create_employee(
+    body: CreateEmployeeIn,
+    db: Session = Depends(get_db),
+    _: Employee = Depends(require_manager),
+) -> Employee:
+    email = body.email.strip().lower()
+    if db.query(Employee).filter(Employee.email == email).first():
+        raise HTTPException(status_code=400, detail="Email already registered")
+    try:
+        contract = ContractType(body.contract_type)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="contract_type must be full_time or part_time") from exc
+    emp = Employee(
+        email=email,
+        password_hash=hash_password(body.password),
+        full_name=body.full_name.strip(),
+        role=Role.employee,
+        contract_type=contract,
+        max_weekly_hours=body.max_weekly_hours,
+        active=True,
+    )
+    db.add(emp)
+    db.commit()
+    db.refresh(emp)
+    return emp
 
 
 @router.get("/leave", response_model=list[LeaveOut])

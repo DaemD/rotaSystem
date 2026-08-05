@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   adminClockOut,
   broadcastMessage,
+  createEmployee,
   createRotaShift,
   decideLeave,
   deleteRotaShift,
@@ -66,6 +67,14 @@ export default function ManagerPortal({ token, me, onLogout }: Props) {
     shift_date: mondayISO(),
     shift_type: "regular" as ShiftTypeCode,
   });
+  const [empForm, setEmpForm] = useState({
+    full_name: "",
+    email: "",
+    password: "",
+    contract_type: "full_time",
+    max_weekly_hours: 40,
+  });
+  const [creatingEmp, setCreatingEmp] = useState(false);
 
   const activeNav = NAV.find((n) => n.id === tab)!;
   const clockableTypes = useMemo(
@@ -173,6 +182,33 @@ export default function ManagerPortal({ token, me, onLogout }: Props) {
       setThreads(th);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Send failed");
+    }
+  }
+
+  async function onCreateEmployee(e: React.FormEvent) {
+    e.preventDefault();
+    setError("");
+    setCreatingEmp(true);
+    try {
+      await createEmployee(token, {
+        full_name: empForm.full_name.trim(),
+        email: empForm.email.trim(),
+        password: empForm.password,
+        contract_type: empForm.contract_type,
+        max_weekly_hours: Number(empForm.max_weekly_hours),
+      });
+      setEmpForm({
+        full_name: "",
+        email: "",
+        password: "",
+        contract_type: "full_time",
+        max_weekly_hours: 40,
+      });
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not create employee");
+    } finally {
+      setCreatingEmp(false);
     }
   }
 
@@ -357,42 +393,108 @@ export default function ManagerPortal({ token, me, onLogout }: Props) {
           )}
 
           {tab === "employees" && (
-            <section className="panel">
-              <div className="panel-head">
-                <div>
-                  <h2>Employees</h2>
-                  <p className="muted">{employees.length} active staff</p>
+            <section className="stack">
+              <form className="panel" onSubmit={onCreateEmployee}>
+                <div className="panel-head">
+                  <div>
+                    <h2>Add employee</h2>
+                    <p className="muted">Only managers can create staff accounts.</p>
+                  </div>
                 </div>
-              </div>
-              {employees.length === 0 ? (
-                <div className="empty-state">
-                  <h3>No employees yet</h3>
-                  <p>Register staff accounts with role Employee.</p>
+                <div className="form-grid three">
+                  <label className="field">
+                    Full name
+                    <input
+                      required
+                      value={empForm.full_name}
+                      onChange={(e) => setEmpForm((f) => ({ ...f, full_name: e.target.value }))}
+                    />
+                  </label>
+                  <label className="field">
+                    Email
+                    <input
+                      type="email"
+                      required
+                      value={empForm.email}
+                      onChange={(e) => setEmpForm((f) => ({ ...f, email: e.target.value }))}
+                    />
+                  </label>
+                  <label className="field">
+                    Temp password
+                    <input
+                      type="text"
+                      required
+                      minLength={6}
+                      value={empForm.password}
+                      onChange={(e) => setEmpForm((f) => ({ ...f, password: e.target.value }))}
+                    />
+                  </label>
+                  <label className="field">
+                    Contract
+                    <select
+                      value={empForm.contract_type}
+                      onChange={(e) => setEmpForm((f) => ({ ...f, contract_type: e.target.value }))}
+                    >
+                      <option value="full_time">Full time</option>
+                      <option value="part_time">Part time</option>
+                    </select>
+                  </label>
+                  <label className="field">
+                    Max weekly hours
+                    <input
+                      type="number"
+                      min={1}
+                      max={80}
+                      required
+                      value={empForm.max_weekly_hours}
+                      onChange={(e) =>
+                        setEmpForm((f) => ({ ...f, max_weekly_hours: Number(e.target.value) }))
+                      }
+                    />
+                  </label>
                 </div>
-              ) : (
-                <div className="table-wrap">
-                  <table className="data-table">
-                    <thead>
-                      <tr>
-                        <th>Name</th>
-                        <th>Email</th>
-                        <th>Contract</th>
-                        <th>Max hours</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {employees.map((e) => (
-                        <tr key={e.id}>
-                          <td>{e.full_name}</td>
-                          <td>{e.email}</td>
-                          <td className="cap">{e.contract_type.replace("_", " ")}</td>
-                          <td>{e.max_weekly_hours}</td>
+                <button type="submit" className="btn primary" disabled={creatingEmp}>
+                  {creatingEmp ? "Creating…" : "Create employee"}
+                </button>
+              </form>
+
+              <div className="panel">
+                <div className="panel-head">
+                  <div>
+                    <h2>Employees</h2>
+                    <p className="muted">{employees.length} active staff</p>
+                  </div>
+                </div>
+                {employees.length === 0 ? (
+                  <div className="empty-state">
+                    <h3>No employees yet</h3>
+                    <p>Create staff accounts above, then share their login details.</p>
+                  </div>
+                ) : (
+                  <div className="table-wrap">
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>Name</th>
+                          <th>Email</th>
+                          <th>Contract</th>
+                          <th>Max hours</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+                      </thead>
+                      <tbody>
+                        {employees.map((e) => (
+                          <tr key={e.id}>
+                            <td>{e.full_name}</td>
+                            <td>{e.email}</td>
+                            <td className="cap">{e.contract_type.replace("_", " ")}</td>
+                            <td>{e.max_weekly_hours}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
             </section>
           )}
 

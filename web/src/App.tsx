@@ -1,19 +1,14 @@
 import { useEffect, useState } from "react";
 import "./App.css";
-import { getMe, login, register, type Employee } from "./api";
+import { getMe, login, type Employee } from "./api";
 import EmployeePortal from "./EmployeePortal";
 import ManagerPortal from "./ManagerPortal";
-
-type AuthMode = "login" | "register";
 
 export default function App() {
   const [token, setToken] = useState<string | null>(() => localStorage.getItem("token"));
   const [me, setMe] = useState<Employee | null>(null);
-  const [authMode, setAuthMode] = useState<AuthMode>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [fullName, setFullName] = useState("");
-  const [regRole, setRegRole] = useState<"employee" | "manager">("employee");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [booting, setBooting] = useState(Boolean(token));
@@ -51,22 +46,6 @@ export default function App() {
     }
   }
 
-  async function onRegister(e: React.FormEvent) {
-    e.preventDefault();
-    setError("");
-    setLoading(true);
-    try {
-      await register({ email, password, full_name: fullName, role: regRole });
-      const t = await login(email, password);
-      localStorage.setItem("token", t);
-      setToken(t);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Register failed");
-    } finally {
-      setLoading(false);
-    }
-  }
-
   function logout() {
     localStorage.removeItem("token");
     setToken(null);
@@ -95,54 +74,13 @@ export default function App() {
         <div>
           <p className="brand-kicker">Supreme Childcare</p>
           <h1>Time &amp; Attendance</h1>
-          <p className="auth-lead">Employee and manager portals — clocking, leave, rota, messaging.</p>
+          <p className="auth-lead">Sign in with your work account. Managers create employee logins.</p>
         </div>
       </div>
       <div className="auth-panel">
-        <div className="auth-tabs">
-          <button
-            type="button"
-            className={authMode === "login" ? "active" : ""}
-            onClick={() => {
-              setAuthMode("login");
-              setError("");
-            }}
-          >
-            Sign in
-          </button>
-          <button
-            type="button"
-            className={authMode === "register" ? "active" : ""}
-            onClick={() => {
-              setAuthMode("register");
-              setError("");
-            }}
-          >
-            Register
-          </button>
-        </div>
-        <h2>{authMode === "login" ? "Welcome back" : "Create your account"}</h2>
-        <p className="muted">
-          {authMode === "login"
-            ? "Managers and employees land in different dashboards by role."
-            : "Register as employee or manager. Data is stored in Postgres."}
-        </p>
-        <form onSubmit={authMode === "login" ? onLogin : onRegister} className="form-grid">
-          {authMode === "register" && (
-            <>
-              <label>
-                Full name
-                <input value={fullName} onChange={(e) => setFullName(e.target.value)} required />
-              </label>
-              <label>
-                Role
-                <select value={regRole} onChange={(e) => setRegRole(e.target.value as "employee" | "manager")}>
-                  <option value="employee">Employee</option>
-                  <option value="manager">Manager</option>
-                </select>
-              </label>
-            </>
-          )}
+        <h2>Sign in</h2>
+        <p className="muted">Employees use credentials issued by a manager.</p>
+        <form onSubmit={onLogin} className="form-grid">
           <label>
             Email
             <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" required />
@@ -159,7 +97,7 @@ export default function App() {
           </label>
           {error && <div className="alert error">{error}</div>}
           <button type="submit" className="btn primary block" disabled={loading}>
-            {loading ? "Please wait…" : authMode === "login" ? "Sign in" : "Create account"}
+            {loading ? "Please wait…" : "Sign in"}
           </button>
         </form>
       </div>

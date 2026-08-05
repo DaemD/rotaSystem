@@ -16,11 +16,12 @@ class LoginIn(BaseModel):
     password: str
 
 
-class RegisterIn(BaseModel):
+class CreateEmployeeIn(BaseModel):
     email: str
     password: str = Field(min_length=6)
     full_name: str = Field(min_length=1, max_length=255)
-    role: Role = Role.employee
+    contract_type: str = "full_time"
+    max_weekly_hours: int = Field(default=40, ge=1, le=80)
 
 
 class EmployeeOut(BaseModel):

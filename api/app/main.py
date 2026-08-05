@@ -6,7 +6,7 @@ from sqlalchemy import text
 
 from app.database import Base, SessionLocal, engine
 from app.routers import employee, manager
-from app.seed import ensure_shift_types
+from app.seed import ensure_manager, ensure_shift_types
 
 
 def _ensure_clock_override_columns() -> None:
@@ -27,6 +27,7 @@ async def lifespan(_: FastAPI):
     db = SessionLocal()
     try:
         ensure_shift_types(db)
+        ensure_manager(db)
     finally:
         db.close()
     yield

@@ -30,8 +30,9 @@
 
 ## 4. Test
 1. Open the **web** URL
-2. Register a manager + employee
-3. API docs: `https://YOUR-API-URL/docs`
+2. Sign in as manager: `manager@supreme.com` / `Manager@123`
+3. Create employee accounts from Employees tab
+4. API docs: `https://YOUR-API-URL/docs`
 
 ## Local Docker reminder
 Postgres locally still uses `docker compose up -d` on port 5433.

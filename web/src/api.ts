@@ -119,15 +119,6 @@ export type MessageThread = {
   unread_count: number;
 };
 
-export async function register(body: {
-  email: string;
-  password: string;
-  full_name: string;
-  role: "employee" | "manager";
-}) {
-  return request<Employee>("/auth/register", { method: "POST", body: JSON.stringify(body) });
-}
-
 export async function login(email: string, password: string) {
   const data = await request<{ access_token: string }>("/auth/login", {
     method: "POST",
@@ -162,6 +153,16 @@ export const getOverview = (token: string, rangeDays = 7) =>
   request<Overview>(`/admin/overview?range_days=${rangeDays}`, {}, token);
 export const getLive = (token: string) => request<ClockEvent[]>("/admin/live", {}, token);
 export const getEmployees = (token: string) => request<Employee[]>("/admin/employees", {}, token);
+export const createEmployee = (
+  token: string,
+  body: {
+    email: string;
+    password: string;
+    full_name: string;
+    contract_type?: string;
+    max_weekly_hours?: number;
+  },
+) => request<Employee>("/admin/employees", { method: "POST", body: JSON.stringify(body) }, token);
 export const getAdminLeave = (token: string, status?: string) =>
   request<LeaveRecord[]>(`/admin/leave${status ? `?status=${status}` : ""}`, {}, token);
 export const decideLeave = (token: string, id: string, status: "approved" | "rejected") =>
