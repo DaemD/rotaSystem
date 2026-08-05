@@ -592,6 +592,25 @@ select:focus {
 
 .page-alert {
   margin-bottom: 14px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.alert-close {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+  opacity: 0.75;
+}
+
+.alert-close:hover {
+  opacity: 1;
 }
 
 /* ---------- Messages ---------- */

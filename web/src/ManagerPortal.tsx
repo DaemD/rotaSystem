@@ -82,6 +82,24 @@ export default function ManagerPortal({ token, me, onLogout }: Props) {
     [shiftTypes],
   );
 
+  function showError(message: string) {
+    setError(message);
+  }
+
+  function clearError() {
+    setError("");
+  }
+
+  useEffect(() => {
+    if (!error) return;
+    const t = window.setTimeout(clearError, 8000);
+    return () => window.clearTimeout(t);
+  }, [error]);
+
+  useEffect(() => {
+    clearError();
+  }, [tab]);
+
   async function refresh() {
     const [ov, lv, emps, leaveRows, rotaRows, types, th] = await Promise.all([
       getOverview(token, rangeDays),
@@ -107,7 +125,7 @@ export default function ManagerPortal({ token, me, onLogout }: Props) {
   }
 
   useEffect(() => {
-    refresh().catch((e) => setError(String(e.message || e)));
+    refresh().catch((e) => showError(String(e.message || e)));
   }, [token, rangeDays, leaveFilter, weekStart]);
 
   useEffect(() => {
@@ -117,22 +135,22 @@ export default function ManagerPortal({ token, me, onLogout }: Props) {
     }
     getAdminThread(token, activeEmpId)
       .then(setThread)
-      .catch((e) => setError(String(e.message || e)));
+      .catch((e) => showError(String(e.message || e)));
   }, [token, activeEmpId]);
 
   async function onDecide(id: string, status: "approved" | "rejected") {
-    setError("");
+    clearError();
     try {
       await decideLeave(token, id, status);
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Leave update failed");
+      showError(err instanceof Error ? err.message : "Leave update failed");
     }
   }
 
   async function onAddShift(e: React.FormEvent) {
     e.preventDefault();
-    setError("");
+    clearError();
     try {
       await createRotaShift(token, {
         employee_id: rotaForm.employee_id,
@@ -141,33 +159,33 @@ export default function ManagerPortal({ token, me, onLogout }: Props) {
       });
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not add shift");
+      showError(err instanceof Error ? err.message : "Could not add shift");
     }
   }
 
   async function onDeleteShift(id: string) {
-    setError("");
+    clearError();
     try {
       await deleteRotaShift(token, id);
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not delete shift");
+      showError(err instanceof Error ? err.message : "Could not delete shift");
     }
   }
 
   async function onOverride(employeeId: string) {
     const reason = (overrideReason[employeeId] || "").trim();
     if (!reason) {
-      setError("Enter a reason before forcing clock-out");
+      showError("Enter a reason before forcing clock-out");
       return;
     }
-    setError("");
+    clearError();
     try {
       await adminClockOut(token, employeeId, reason);
       setOverrideReason((r) => ({ ...r, [employeeId]: "" }));
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Override failed");
+      showError(err instanceof Error ? err.message : "Override failed");
     }
   }
 
@@ -181,13 +199,13 @@ export default function ManagerPortal({ token, me, onLogout }: Props) {
       setThread(msgs);
       setThreads(th);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Send failed");
+      showError(err instanceof Error ? err.message : "Send failed");
     }
   }
 
   async function onCreateEmployee(e: React.FormEvent) {
     e.preventDefault();
-    setError("");
+    clearError();
     setCreatingEmp(true);
     try {
       await createEmployee(token, {
@@ -206,7 +224,7 @@ export default function ManagerPortal({ token, me, onLogout }: Props) {
       });
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not create employee");
+      showError(err instanceof Error ? err.message : "Could not create employee");
     } finally {
       setCreatingEmp(false);
     }
@@ -220,7 +238,7 @@ export default function ManagerPortal({ token, me, onLogout }: Props) {
       setBroadcast("");
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Broadcast failed");
+      showError(err instanceof Error ? err.message : "Broadcast failed");
     }
   }
 
@@ -275,7 +293,14 @@ export default function ManagerPortal({ token, me, onLogout }: Props) {
           </span>
         </header>
 
-        {error && <div className="alert error page-alert">{error}</div>}
+        {error && (
+          <div className="alert error page-alert" role="alert">
+            <span>{error}</span>
+            <button type="button" className="alert-close" onClick={clearError} aria-label="Dismiss">
+              ×
+            </button>
+          </div>
+        )}
 
         <div className="content">
           {tab === "overview" && overview && (
