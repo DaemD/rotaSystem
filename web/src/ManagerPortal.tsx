@@ -1,0 +1,704 @@
+import { useEffect, useMemo, useState } from "react";
+import {
+  adminClockOut,
+  broadcastMessage,
+  createRotaShift,
+  decideLeave,
+  deleteRotaShift,
+  getAdminLeave,
+  getAdminThread,
+  getEmployees,
+  getLive,
+  getMessageThreads,
+  getOverview,
+  getRota,
+  getShiftTypes,
+  replyToEmployee,
+  type ClockEvent,
+  type Employee,
+  type LeaveRecord,
+  type Message,
+  type MessageThread,
+  type Overview,
+  type ScheduledShift,
+  type ShiftType,
+  type ShiftTypeCode,
+} from "./api";
+import { fmtDate, fmtTime, initials, mondayISO, statusClass } from "./utils";
+
+type Tab = "overview" | "live" | "employees" | "leave" | "rota" | "messages";
+
+const NAV: { id: Tab; label: string; desc: string }[] = [
+  { id: "overview", label: "Overview", desc: "Team totals and trends" },
+  { id: "live", label: "Live", desc: "Who is clocked in now" },
+  { id: "employees", label: "Employees", desc: "Active staff directory" },
+  { id: "leave", label: "Leave", desc: "Approve or reject requests" },
+  { id: "rota", label: "Rota", desc: "Build and publish weekly shifts" },
+  { id: "messages", label: "Messages", desc: "Inbox and broadcast" },
+];
+
+type Props = {
+  token: string;
+  me: Employee;
+  onLogout: () => void;
+};
+
+export default function ManagerPortal({ token, me, onLogout }: Props) {
+  const [tab, setTab] = useState<Tab>("overview");
+  const [error, setError] = useState("");
+  const [rangeDays, setRangeDays] = useState(7);
+  const [overview, setOverview] = useState<Overview | null>(null);
+  const [live, setLive] = useState<ClockEvent[]>([]);
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [leave, setLeave] = useState<LeaveRecord[]>([]);
+  const [leaveFilter, setLeaveFilter] = useState<"all" | "pending">("pending");
+  const [rota, setRota] = useState<ScheduledShift[]>([]);
+  const [shiftTypes, setShiftTypes] = useState<ShiftType[]>([]);
+  const [weekStart, setWeekStart] = useState(mondayISO());
+  const [threads, setThreads] = useState<MessageThread[]>([]);
+  const [activeEmpId, setActiveEmpId] = useState<string>("");
+  const [thread, setThread] = useState<Message[]>([]);
+  const [msgText, setMsgText] = useState("");
+  const [broadcast, setBroadcast] = useState("");
+  const [overrideReason, setOverrideReason] = useState<Record<string, string>>({});
+  const [rotaForm, setRotaForm] = useState({
+    employee_id: "",
+    shift_date: mondayISO(),
+    shift_type: "regular" as ShiftTypeCode,
+  });
+
+  const activeNav = NAV.find((n) => n.id === tab)!;
+  const clockableTypes = useMemo(
+    () => shiftTypes.filter((t) => t.code !== "annual_leave" && t.code !== "sick"),
+    [shiftTypes],
+  );
+
+  async function refresh() {
+    const [ov, lv, emps, leaveRows, rotaRows, types, th] = await Promise.all([
+      getOverview(token, rangeDays),
+      getLive(token),
+      getEmployees(token),
+      getAdminLeave(token, leaveFilter === "pending" ? "pending" : undefined),
+      getRota(token, weekStart),
+      getShiftTypes(token),
+      getMessageThreads(token),
+    ]);
+    setOverview(ov);
+    setLive(lv);
+    setEmployees(emps);
+    setLeave(leaveRows);
+    setRota(rotaRows);
+    setShiftTypes(types);
+    setThreads(th);
+    setRotaForm((f) => ({
+      ...f,
+      employee_id: f.employee_id || emps[0]?.id || "",
+      shift_type: (f.shift_type || types.find((t) => t.code === "regular")?.code || "regular") as ShiftTypeCode,
+    }));
+  }
+
+  useEffect(() => {
+    refresh().catch((e) => setError(String(e.message || e)));
+  }, [token, rangeDays, leaveFilter, weekStart]);
+
+  useEffect(() => {
+    if (!activeEmpId) {
+      setThread([]);
+      return;
+    }
+    getAdminThread(token, activeEmpId)
+      .then(setThread)
+      .catch((e) => setError(String(e.message || e)));
+  }, [token, activeEmpId]);
+
+  async function onDecide(id: string, status: "approved" | "rejected") {
+    setError("");
+    try {
+      await decideLeave(token, id, status);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Leave update failed");
+    }
+  }
+
+  async function onAddShift(e: React.FormEvent) {
+    e.preventDefault();
+    setError("");
+    try {
+      await createRotaShift(token, {
+        employee_id: rotaForm.employee_id,
+        shift_date: rotaForm.shift_date,
+        shift_type: rotaForm.shift_type,
+      });
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not add shift");
+    }
+  }
+
+  async function onDeleteShift(id: string) {
+    setError("");
+    try {
+      await deleteRotaShift(token, id);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not delete shift");
+    }
+  }
+
+  async function onOverride(employeeId: string) {
+    const reason = (overrideReason[employeeId] || "").trim();
+    if (!reason) {
+      setError("Enter a reason before forcing clock-out");
+      return;
+    }
+    setError("");
+    try {
+      await adminClockOut(token, employeeId, reason);
+      setOverrideReason((r) => ({ ...r, [employeeId]: "" }));
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Override failed");
+    }
+  }
+
+  async function onReply(e: React.FormEvent) {
+    e.preventDefault();
+    if (!activeEmpId || !msgText.trim()) return;
+    try {
+      await replyToEmployee(token, activeEmpId, msgText.trim());
+      setMsgText("");
+      const [msgs, th] = await Promise.all([getAdminThread(token, activeEmpId), getMessageThreads(token)]);
+      setThread(msgs);
+      setThreads(th);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Send failed");
+    }
+  }
+
+  async function onBroadcast(e: React.FormEvent) {
+    e.preventDefault();
+    if (!broadcast.trim()) return;
+    try {
+      await broadcastMessage(token, broadcast.trim());
+      setBroadcast("");
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Broadcast failed");
+    }
+  }
+
+  return (
+    <div className="crm">
+      <aside className="sidebar">
+        <div className="sidebar-brand">
+          <div className="brand-mark sm">SC</div>
+          <div>
+            <strong>Supreme</strong>
+            <span>Manager CRM</span>
+          </div>
+        </div>
+        <nav className="side-nav">
+          {NAV.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className={tab === item.id ? "nav-item active" : "nav-item"}
+              onClick={() => setTab(item.id)}
+            >
+              <span className="nav-label">{item.label}</span>
+              {item.id === "messages" && threads.some((t) => t.unread_count > 0) && <span className="nav-dot" />}
+              {item.id === "leave" && overview && overview.pending_leave > 0 && (
+                <span className="nav-count">{overview.pending_leave}</span>
+              )}
+            </button>
+          ))}
+        </nav>
+        <div className="sidebar-user">
+          <div className="avatar">{initials(me.full_name)}</div>
+          <div className="sidebar-user-meta">
+            <strong>{me.full_name}</strong>
+            <span>{me.role}</span>
+          </div>
+          <button type="button" className="btn ghost sm" onClick={onLogout}>
+            Log out
+          </button>
+        </div>
+      </aside>
+
+      <div className="main">
+        <header className="topbar">
+          <div>
+            <p className="kicker">Manager workspace</p>
+            <h1>{activeNav.label}</h1>
+            <p className="muted">{activeNav.desc}</p>
+          </div>
+          <span className={`status-chip ${live.length ? "on" : ""}`}>
+            <span className="status-dot" />
+            {live.length} clocked in
+          </span>
+        </header>
+
+        {error && <div className="alert error page-alert">{error}</div>}
+
+        <div className="content">
+          {tab === "overview" && overview && (
+            <section className="stack">
+              <div className="toolbar">
+                <label className="field inline">
+                  Range
+                  <select value={rangeDays} onChange={(e) => setRangeDays(Number(e.target.value))}>
+                    <option value={7}>Last 7 days</option>
+                    <option value={14}>Last 14 days</option>
+                    <option value={30}>Last 30 days</option>
+                  </select>
+                </label>
+              </div>
+              <div className="kpi-row kpi-4">
+                <article className="kpi">
+                  <span className="kpi-label">Active staff</span>
+                  <strong className="kpi-value">{overview.employees_active}</strong>
+                </article>
+                <article className="kpi">
+                  <span className="kpi-label">Clocked in now</span>
+                  <strong className="kpi-value">{overview.currently_clocked_in}</strong>
+                </article>
+                <article className="kpi">
+                  <span className="kpi-label">Hours worked</span>
+                  <strong className="kpi-value">{overview.hours_worked}</strong>
+                  <span className="kpi-meta">{overview.range_days} day window</span>
+                </article>
+                <article className="kpi">
+                  <span className="kpi-label">Late events</span>
+                  <strong className="kpi-value">{overview.late_events}</strong>
+                </article>
+              </div>
+              <div className="kpi-row">
+                <article className="kpi">
+                  <span className="kpi-label">Shifts completed</span>
+                  <strong className="kpi-value">{overview.shifts_completed}</strong>
+                </article>
+                <article className="kpi">
+                  <span className="kpi-label">Pending leave</span>
+                  <strong className="kpi-value">{overview.pending_leave}</strong>
+                </article>
+                <article className="kpi">
+                  <span className="kpi-label">Sick / AL requests</span>
+                  <strong className="kpi-value">
+                    {overview.sick_requests} / {overview.annual_leave_requests}
+                  </strong>
+                </article>
+              </div>
+            </section>
+          )}
+
+          {tab === "live" && (
+            <section className="panel">
+              <div className="panel-head">
+                <div>
+                  <h2>Live attendance</h2>
+                  <p className="muted">Force clock-out requires a reason (admin override).</p>
+                </div>
+                <button type="button" className="btn" onClick={() => refresh()}>
+                  Refresh
+                </button>
+              </div>
+              {live.length === 0 ? (
+                <div className="empty-state">
+                  <h3>Nobody clocked in</h3>
+                </div>
+              ) : (
+                <div className="table-wrap">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Employee</th>
+                        <th>Shift</th>
+                        <th>Since</th>
+                        <th>Late</th>
+                        <th>Override</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {live.map((ev) => (
+                        <tr key={ev.id}>
+                          <td>{ev.employee_name}</td>
+                          <td>{ev.shift_type.display_name}</td>
+                          <td>{fmtTime(ev.clock_in_at)}</td>
+                          <td>{ev.lateness_minutes > 0 ? `${ev.lateness_minutes}m` : "—"}</td>
+                          <td>
+                            <div className="inline-actions">
+                              <input
+                                placeholder="Reason"
+                                value={overrideReason[ev.employee_id || ""] || ""}
+                                onChange={(e) =>
+                                  setOverrideReason((r) => ({
+                                    ...r,
+                                    [ev.employee_id || ""]: e.target.value,
+                                  }))
+                                }
+                              />
+                              <button
+                                type="button"
+                                className="btn danger sm-btn"
+                                onClick={() => ev.employee_id && onOverride(ev.employee_id)}
+                              >
+                                Clock out
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+          )}
+
+          {tab === "employees" && (
+            <section className="panel">
+              <div className="panel-head">
+                <div>
+                  <h2>Employees</h2>
+                  <p className="muted">{employees.length} active staff</p>
+                </div>
+              </div>
+              {employees.length === 0 ? (
+                <div className="empty-state">
+                  <h3>No employees yet</h3>
+                  <p>Register staff accounts with role Employee.</p>
+                </div>
+              ) : (
+                <div className="table-wrap">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Name</th>
+                        <th>Email</th>
+                        <th>Contract</th>
+                        <th>Max hours</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {employees.map((e) => (
+                        <tr key={e.id}>
+                          <td>{e.full_name}</td>
+                          <td>{e.email}</td>
+                          <td className="cap">{e.contract_type.replace("_", " ")}</td>
+                          <td>{e.max_weekly_hours}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+          )}
+
+          {tab === "leave" && (
+            <section className="panel">
+              <div className="panel-head">
+                <div>
+                  <h2>Leave requests</h2>
+                  <p className="muted">Approve or reject pending requests.</p>
+                </div>
+                <div className="seg">
+                  <button
+                    type="button"
+                    className={leaveFilter === "pending" ? "active" : ""}
+                    onClick={() => setLeaveFilter("pending")}
+                  >
+                    Pending
+                  </button>
+                  <button
+                    type="button"
+                    className={leaveFilter === "all" ? "active" : ""}
+                    onClick={() => setLeaveFilter("all")}
+                  >
+                    All
+                  </button>
+                </div>
+              </div>
+              {leave.length === 0 ? (
+                <div className="empty-state">
+                  <h3>No leave requests</h3>
+                </div>
+              ) : (
+                <div className="table-wrap">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Employee</th>
+                        <th>Type</th>
+                        <th>From</th>
+                        <th>To</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {leave.map((l) => (
+                        <tr key={l.id}>
+                          <td>{l.employee_name}</td>
+                          <td className="cap">{l.leave_type.replace("_", " ")}</td>
+                          <td>{fmtDate(l.start_date)}</td>
+                          <td>{fmtDate(l.end_date)}</td>
+                          <td>
+                            <span className={statusClass(l.status)}>{l.status}</span>
+                          </td>
+                          <td>
+                            {l.status === "pending" ? (
+                              <div className="inline-actions">
+                                <button type="button" className="btn primary sm-btn" onClick={() => onDecide(l.id, "approved")}>
+                                  Approve
+                                </button>
+                                <button type="button" className="btn danger sm-btn" onClick={() => onDecide(l.id, "rejected")}>
+                                  Reject
+                                </button>
+                              </div>
+                            ) : (
+                              "—"
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+          )}
+
+          {tab === "rota" && (
+            <section className="stack">
+              <form className="panel" onSubmit={onAddShift}>
+                <div className="panel-head">
+                  <div>
+                    <h2>Add shift</h2>
+                    <p className="muted">Manual rota — no AI. Shifts go live for employees immediately.</p>
+                  </div>
+                  <label className="field inline">
+                    Week start (Mon)
+                    <input type="date" value={weekStart} onChange={(e) => setWeekStart(e.target.value)} />
+                  </label>
+                </div>
+                <div className="form-grid three">
+                  <label className="field">
+                    Employee
+                    <select
+                      value={rotaForm.employee_id}
+                      onChange={(e) => setRotaForm((f) => ({ ...f, employee_id: e.target.value }))}
+                      required
+                    >
+                      {employees.map((e) => (
+                        <option key={e.id} value={e.id}>
+                          {e.full_name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="field">
+                    Date
+                    <input
+                      type="date"
+                      required
+                      value={rotaForm.shift_date}
+                      onChange={(e) => setRotaForm((f) => ({ ...f, shift_date: e.target.value }))}
+                    />
+                  </label>
+                  <label className="field">
+                    Shift type
+                    <select
+                      value={rotaForm.shift_type}
+                      onChange={(e) =>
+                        setRotaForm((f) => ({ ...f, shift_type: e.target.value as ShiftTypeCode }))
+                      }
+                    >
+                      {clockableTypes.map((t) => (
+                        <option key={t.id} value={t.code}>
+                          {t.display_name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                <button type="submit" className="btn primary" disabled={!rotaForm.employee_id}>
+                  Add to rota
+                </button>
+              </form>
+
+              <div className="panel">
+                <div className="panel-head">
+                  <div>
+                    <h2>Week rota</h2>
+                    <p className="muted">Week of {fmtDate(weekStart)}</p>
+                  </div>
+                </div>
+                {rota.length === 0 ? (
+                  <div className="empty-state">
+                    <h3>No shifts this week</h3>
+                  </div>
+                ) : (
+                  <div className="table-wrap">
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>Employee</th>
+                          <th>Date</th>
+                          <th>Start</th>
+                          <th>End</th>
+                          <th>Type</th>
+                          <th />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rota.map((s) => (
+                          <tr key={s.id}>
+                            <td>{s.employee_name}</td>
+                            <td>{fmtDate(s.shift_date)}</td>
+                            <td>{s.start_time.slice(0, 5)}</td>
+                            <td>{s.end_time.slice(0, 5)}</td>
+                            <td>
+                              <span className="badge neutral">{s.shift_type.display_name}</span>
+                            </td>
+                            <td>
+                              <button type="button" className="btn danger sm-btn" onClick={() => onDeleteShift(s.id)}>
+                                Remove
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </section>
+          )}
+
+          {tab === "messages" && (
+            <section className="stack">
+              <form className="panel" onSubmit={onBroadcast}>
+                <div className="panel-head">
+                  <div>
+                    <h2>Broadcast</h2>
+                    <p className="muted">Send one message to all employees.</p>
+                  </div>
+                </div>
+                <div className="compose">
+                  <input
+                    value={broadcast}
+                    onChange={(e) => setBroadcast(e.target.value)}
+                    placeholder="Broadcast message…"
+                  />
+                  <button type="submit" className="btn primary" disabled={!broadcast.trim()}>
+                    Send all
+                  </button>
+                </div>
+              </form>
+
+              <div className="inbox-grid">
+                <div className="panel inbox-list">
+                  <div className="panel-head">
+                    <div>
+                      <h2>Inbox</h2>
+                      <p className="muted">Select a staff member</p>
+                    </div>
+                  </div>
+                  <label className="field" style={{ marginBottom: 12 }}>
+                    Open chat
+                    <select
+                      value={activeEmpId}
+                      onChange={(e) => setActiveEmpId(e.target.value)}
+                    >
+                      <option value="">Choose employee…</option>
+                      {employees.map((e) => (
+                        <option key={e.id} value={e.id}>
+                          {e.full_name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {threads.length === 0 ? (
+                    <p className="muted">No conversations yet.</p>
+                  ) : (
+                    <div className="thread-list">
+                      {threads.map((t) => (
+                        <button
+                          key={t.employee_id}
+                          type="button"
+                          className={activeEmpId === t.employee_id ? "thread-item active" : "thread-item"}
+                          onClick={() => setActiveEmpId(t.employee_id)}
+                        >
+                          <strong>{t.employee_name}</strong>
+                          <span>{t.last_text}</span>
+                          {t.unread_count > 0 && <em>{t.unread_count}</em>}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="panel messages-panel">
+                  <div className="panel-head">
+                    <div>
+                      <h2>{activeEmpId ? employees.find((e) => e.id === activeEmpId)?.full_name || "Chat" : "Chat"}</h2>
+                      <p className="muted">Reply to this employee</p>
+                    </div>
+                  </div>
+                  <div className="thread">
+                    {!activeEmpId ? (
+                      <div className="empty-state">
+                        <h3>Select an employee</h3>
+                      </div>
+                    ) : thread.length === 0 ? (
+                      <div className="empty-state">
+                        <h3>No messages yet</h3>
+                        <p>Send the first message below.</p>
+                      </div>
+                    ) : (
+                      thread.map((m) => (
+                        <div key={m.id} className={`bubble ${m.from_me ? "me" : "them"}`}>
+                          <div className="bubble-meta">
+                            <strong>{m.from_me ? "Manager" : "Employee"}</strong>
+                            <span>{fmtTime(m.created_at)}</span>
+                          </div>
+                          <p>{m.text}</p>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                  <form className="compose" onSubmit={onReply}>
+                    <input
+                      value={msgText}
+                      onChange={(e) => setMsgText(e.target.value)}
+                      placeholder="Write a reply…"
+                      disabled={!activeEmpId}
+                    />
+                    <button type="submit" className="btn primary" disabled={!activeEmpId || !msgText.trim()}>
+                      Send
+                    </button>
+                  </form>
+                </div>
+              </div>
+            </section>
+          )}
+        </div>
+      </div>
+
+      <nav className="mobile-nav manager">
+        {NAV.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            className={tab === item.id ? "active" : ""}
+            onClick={() => setTab(item.id)}
+          >
+            {item.label}
+          </button>
+        ))}
+      </nav>
+    </div>
+  );
+}

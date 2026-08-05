@@ -1,0 +1,19 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: rota
+      POSTGRES_PASSWORD: rota
+      POSTGRES_DB: rota
+    ports:
+      - "5433:5432"
+    volumes:
+      - rota_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rota -d rota"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  rota_pg:
