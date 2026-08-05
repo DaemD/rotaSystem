@@ -281,6 +281,24 @@ def create_rota_shift(
     if not start_t or not end_t:
         raise HTTPException(status_code=400, detail="start_time and end_time required for this shift type")
 
+    # Business rule: one shift per employee per day
+    # (cannot combine Regular with Sleep / Waking Night, or any two types on the same day)
+    existing = (
+        db.query(ScheduledShift)
+        .options(joinedload(ScheduledShift.shift_type))
+        .filter(ScheduledShift.employee_id == emp.id, ScheduledShift.shift_date == body.shift_date)
+        .first()
+    )
+    if existing:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"{emp.full_name} already has a {existing.shift_type.display_name} shift on "
+                f"{body.shift_date}. Remove it before assigning another type "
+                "(Regular, Sleep, and Waking Night cannot be combined on the same day)."
+            ),
+        )
+
     week = _monday(body.shift_date)
     rota = (
         db.query(RotaPublication)

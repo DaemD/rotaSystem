@@ -106,7 +106,7 @@ class RotaPublication(Base):
 
 class ScheduledShift(Base):
     __tablename__ = "scheduled_shifts"
-    __table_args__ = (UniqueConstraint("employee_id", "shift_date", "shift_type_id", name="uq_emp_day_type"),)
+    __table_args__ = (UniqueConstraint("employee_id", "shift_date", name="uq_emp_day"),)
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     rota_publication_id: Mapped[uuid.UUID | None] = mapped_column(

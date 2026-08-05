@@ -20,10 +20,44 @@ def _ensure_clock_override_columns() -> None:
             conn.execute(text(stmt))
 
 
+def _ensure_one_shift_per_day() -> None:
+    """One shift per employee per calendar day (no Regular + Sleep/WN same day)."""
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE scheduled_shifts DROP CONSTRAINT IF EXISTS uq_emp_day_type"))
+        # Remove duplicate rows if any (keep earliest by id)
+        conn.execute(
+            text(
+                """
+                DELETE FROM scheduled_shifts a
+                USING scheduled_shifts b
+                WHERE a.employee_id = b.employee_id
+                  AND a.shift_date = b.shift_date
+                  AND a.id > b.id
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_constraint WHERE conname = 'uq_emp_day'
+                    ) THEN
+                        ALTER TABLE scheduled_shifts
+                        ADD CONSTRAINT uq_emp_day UNIQUE (employee_id, shift_date);
+                    END IF;
+                END $$;
+                """
+            )
+        )
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     Base.metadata.create_all(bind=engine)
     _ensure_clock_override_columns()
+    _ensure_one_shift_per_day()
     db = SessionLocal()
     try:
         ensure_shift_types(db)

@@ -578,7 +578,9 @@ export default function ManagerPortal({ token, me, onLogout }: Props) {
                 <div className="panel-head">
                   <div>
                     <h2>Add shift</h2>
-                    <p className="muted">Manual rota — no AI. Shifts go live for employees immediately.</p>
+                    <p className="muted">
+                      One shift per person per day — Regular, Sleep, and Waking Night cannot be combined.
+                    </p>
                   </div>
                   <label className="field inline">
                     Week start (Mon)
