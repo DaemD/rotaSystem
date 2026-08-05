@@ -1,4 +1,15 @@
-const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+function resolveApiUrl(raw: unknown): string {
+  const fallback = "http://127.0.0.1:8000";
+  if (typeof raw !== "string" || !raw.trim()) return fallback;
+  let url = raw.trim().replace(/\/$/, "");
+  // Railway users often paste the host without a scheme; browsers then treat it as a relative path.
+  if (!/^https?:\/\//i.test(url)) {
+    url = `https://${url}`;
+  }
+  return url;
+}
+
+const API_URL = resolveApiUrl(import.meta.env.VITE_API_URL);
 
 async function request<T>(path: string, options: RequestInit = {}, token?: string | null): Promise<T> {
   const headers: Record<string, string> = {
@@ -7,19 +18,24 @@ async function request<T>(path: string, options: RequestInit = {}, token?: strin
   };
   if (token) headers.Authorization = `Bearer ${token}`;
 
-  const res = await fetch(`${API_URL}${path}`, { ...options, headers });
+  const url = `${API_URL}${path}`;
+  const res = await fetch(url, { ...options, headers });
+  const contentType = res.headers.get("content-type") || "";
+
+  if (!contentType.includes("application/json")) {
+    const preview = (await res.text()).slice(0, 120);
+    throw new Error(
+      `API did not return JSON from ${url}. Set VITE_API_URL to https://your-api.up.railway.app (got: ${preview}...)`,
+    );
+  }
+
+  const body = await res.json();
   if (!res.ok) {
-    let detail = res.statusText;
-    try {
-      const body = await res.json();
-      detail = body.detail || JSON.stringify(body);
-    } catch {
-      /* ignore */
-    }
+    const detail = body.detail || JSON.stringify(body);
     throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
   }
   if (res.status === 204) return undefined as T;
-  return res.json() as Promise<T>;
+  return body as T;
 }
 
 export type ShiftTypeCode = "regular" | "sleep" | "waking_night" | "annual_leave" | "sick";
