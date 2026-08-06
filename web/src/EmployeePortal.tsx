@@ -19,7 +19,7 @@ import {
   type ShiftTypeCode,
   type WeeklySummary,
 } from "./api";
-import { fmtDate, fmtTime, initials, statusClass } from "./utils";
+import { fmtDate, fmtHoursMinutes, fmtTime, initials, statusClass } from "./utils";
 
 type Tab = "home" | "schedule" | "leave" | "messages";
 
@@ -213,7 +213,7 @@ export default function EmployeePortal({ token, me, onLogout }: Props) {
               <div className="kpi-row">
                 <article className="kpi">
                   <span className="kpi-label">Hours this week</span>
-                  <strong className="kpi-value">{summary.hours_worked}</strong>
+                  <strong className="kpi-value">{fmtHoursMinutes(summary.hours_worked)}</strong>
                   <span className="kpi-meta">{weekLabel}</span>
                 </article>
                 <article className="kpi">

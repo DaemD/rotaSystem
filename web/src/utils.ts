@@ -32,3 +32,11 @@ export function mondayISO(d = new Date()) {
   x.setDate(x.getDate() - day + 1);
   return x.toISOString().slice(0, 10);
 }
+
+/** Format decimal hours as "7h 30m". */
+export function fmtHoursMinutes(hours: number) {
+  const totalMinutes = Math.round(Math.max(0, Number(hours) || 0) * 60);
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+  return `${h}h ${m}m`;
+}

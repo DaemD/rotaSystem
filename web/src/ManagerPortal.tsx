@@ -23,7 +23,7 @@ import {
   type ShiftType,
 } from "./api";
 import RotaBoard from "./RotaBoard";
-import { fmtDate, fmtTime, initials, mondayISO, statusClass } from "./utils";
+import { fmtDate, fmtHoursMinutes, fmtTime, initials, mondayISO, statusClass } from "./utils";
 
 type Tab = "overview" | "live" | "employees" | "leave" | "rota" | "messages";
 
@@ -285,7 +285,7 @@ export default function ManagerPortal({ token, me, onLogout }: Props) {
                 </article>
                 <article className="kpi">
                   <span className="kpi-label">Hours worked</span>
-                  <strong className="kpi-value">{overview.hours_worked}</strong>
+                  <strong className="kpi-value">{fmtHoursMinutes(overview.hours_worked)}</strong>
                   <span className="kpi-meta">{overview.range_days} day window</span>
                 </article>
                 <article className="kpi">
