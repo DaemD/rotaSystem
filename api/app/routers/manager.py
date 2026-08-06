@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -27,6 +27,7 @@ from app.schemas import (
     BroadcastIn,
     ClockEventOut,
     CreateEmployeeIn,
+    EmployeeHoursIn,
     EmployeeOut,
     LeaveDecisionIn,
     LeaveOut,
@@ -35,6 +36,7 @@ from app.schemas import (
     MessageThreadOut,
     OverviewOut,
     RotaShiftCreateIn,
+    RotaShiftUpsertIn,
     ScheduledShiftOut,
     ShiftTypeOut,
 )
@@ -193,9 +195,32 @@ def create_employee(
         role=Role.employee,
         contract_type=contract,
         max_weekly_hours=body.max_weekly_hours,
+        work_start=body.work_start or time(9, 0),
+        work_end=body.work_end or time(17, 0),
         active=True,
     )
     db.add(emp)
+    db.commit()
+    db.refresh(emp)
+    return emp
+
+
+@router.patch("/employees/{employee_id}/hours", response_model=EmployeeOut)
+def update_employee_hours(
+    employee_id: UUID,
+    body: EmployeeHoursIn,
+    db: Session = Depends(get_db),
+    _: Employee = Depends(require_manager),
+) -> Employee:
+    emp = (
+        db.query(Employee)
+        .filter(Employee.id == employee_id, Employee.role == Role.employee, Employee.active.is_(True))
+        .first()
+    )
+    if not emp:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    emp.work_start = body.work_start
+    emp.work_end = body.work_end
     db.commit()
     db.refresh(emp)
     return emp
@@ -324,6 +349,84 @@ def create_rota_shift(
     except Exception as exc:
         db.rollback()
         raise HTTPException(status_code=400, detail="Could not create shift (possible duplicate)") from exc
+    row = (
+        db.query(ScheduledShift)
+        .options(joinedload(ScheduledShift.shift_type), joinedload(ScheduledShift.employee))
+        .filter(ScheduledShift.id == row.id)
+        .one()
+    )
+    return _scheduled_out(row)
+
+
+@router.put("/rota/shifts", response_model=ScheduledShiftOut)
+def upsert_rota_shift(
+    body: RotaShiftUpsertIn,
+    db: Session = Depends(get_db),
+    _: Employee = Depends(require_manager),
+) -> ScheduledShiftOut:
+    emp = (
+        db.query(Employee)
+        .filter(Employee.id == body.employee_id, Employee.role == Role.employee, Employee.active.is_(True))
+        .first()
+    )
+    if not emp:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    if body.shift_type in (ShiftTypeCode.annual_leave, ShiftTypeCode.sick):
+        raise HTTPException(status_code=400, detail="Use leave flow for absence types")
+    st = db.query(ShiftType).filter(ShiftType.code == body.shift_type).first()
+    if not st:
+        raise HTTPException(status_code=400, detail="Unknown shift type")
+
+    existing = (
+        db.query(ScheduledShift)
+        .options(joinedload(ScheduledShift.shift_type), joinedload(ScheduledShift.employee))
+        .filter(ScheduledShift.employee_id == emp.id, ScheduledShift.shift_date == body.shift_date)
+        .first()
+    )
+    if existing and existing.shift_type.code != body.shift_type:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"{emp.full_name} already has a {existing.shift_type.display_name} shift on "
+                f"{body.shift_date}. Clear that day before assigning a different type."
+            ),
+        )
+
+    week = _monday(body.shift_date)
+    rota = (
+        db.query(RotaPublication)
+        .filter(RotaPublication.week_start_date == week, RotaPublication.status == "published")
+        .first()
+    )
+    if not rota:
+        rota = RotaPublication(week_start_date=week, status="published")
+        db.add(rota)
+        db.flush()
+
+    if existing:
+        existing.shift_type_id = st.id
+        existing.start_time = body.start_time
+        existing.end_time = body.end_time
+        existing.rota_publication_id = rota.id
+        db.commit()
+        row = (
+            db.query(ScheduledShift)
+            .options(joinedload(ScheduledShift.shift_type), joinedload(ScheduledShift.employee))
+            .filter(ScheduledShift.id == existing.id)
+            .one()
+        )
+        return _scheduled_out(row)
+
+    row = ScheduledShift(
+        rota_publication_id=rota.id,
+        employee_id=emp.id,
+        shift_date=body.shift_date,
+        shift_type_id=st.id,
+        start_time=body.start_time,
+        end_time=body.end_time,
+    )
+    db.add(row)
+    db.commit()
     row = (
         db.query(ScheduledShift)
         .options(joinedload(ScheduledShift.shift_type), joinedload(ScheduledShift.employee))

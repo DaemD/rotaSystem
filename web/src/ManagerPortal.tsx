@@ -1,11 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   adminClockOut,
   broadcastMessage,
   createEmployee,
-  createRotaShift,
   decideLeave,
-  deleteRotaShift,
   getAdminLeave,
   getAdminThread,
   getEmployees,
@@ -23,8 +21,8 @@ import {
   type Overview,
   type ScheduledShift,
   type ShiftType,
-  type ShiftTypeCode,
 } from "./api";
+import RotaBoard from "./RotaBoard";
 import { fmtDate, fmtTime, initials, mondayISO, statusClass } from "./utils";
 
 type Tab = "overview" | "live" | "employees" | "leave" | "rota" | "messages";
@@ -62,11 +60,6 @@ export default function ManagerPortal({ token, me, onLogout }: Props) {
   const [msgText, setMsgText] = useState("");
   const [broadcast, setBroadcast] = useState("");
   const [overrideReason, setOverrideReason] = useState<Record<string, string>>({});
-  const [rotaForm, setRotaForm] = useState({
-    employee_id: "",
-    shift_date: mondayISO(),
-    shift_type: "regular" as ShiftTypeCode,
-  });
   const [empForm, setEmpForm] = useState({
     full_name: "",
     email: "",
@@ -77,10 +70,6 @@ export default function ManagerPortal({ token, me, onLogout }: Props) {
   const [creatingEmp, setCreatingEmp] = useState(false);
 
   const activeNav = NAV.find((n) => n.id === tab)!;
-  const clockableTypes = useMemo(
-    () => shiftTypes.filter((t) => t.code !== "annual_leave" && t.code !== "sick"),
-    [shiftTypes],
-  );
 
   function showError(message: string) {
     setError(message);
@@ -117,11 +106,6 @@ export default function ManagerPortal({ token, me, onLogout }: Props) {
     setRota(rotaRows);
     setShiftTypes(types);
     setThreads(th);
-    setRotaForm((f) => ({
-      ...f,
-      employee_id: f.employee_id || emps[0]?.id || "",
-      shift_type: (f.shift_type || types.find((t) => t.code === "regular")?.code || "regular") as ShiftTypeCode,
-    }));
   }
 
   useEffect(() => {
@@ -145,31 +129,6 @@ export default function ManagerPortal({ token, me, onLogout }: Props) {
       await refresh();
     } catch (err) {
       showError(err instanceof Error ? err.message : "Leave update failed");
-    }
-  }
-
-  async function onAddShift(e: React.FormEvent) {
-    e.preventDefault();
-    clearError();
-    try {
-      await createRotaShift(token, {
-        employee_id: rotaForm.employee_id,
-        shift_date: rotaForm.shift_date,
-        shift_type: rotaForm.shift_type,
-      });
-      await refresh();
-    } catch (err) {
-      showError(err instanceof Error ? err.message : "Could not add shift");
-    }
-  }
-
-  async function onDeleteShift(id: string) {
-    clearError();
-    try {
-      await deleteRotaShift(token, id);
-      await refresh();
-    } catch (err) {
-      showError(err instanceof Error ? err.message : "Could not delete shift");
     }
   }
 
@@ -598,112 +557,16 @@ export default function ManagerPortal({ token, me, onLogout }: Props) {
           )}
 
           {tab === "rota" && (
-            <section className="stack">
-              <form className="panel" onSubmit={onAddShift}>
-                <div className="panel-head">
-                  <div>
-                    <h2>Add shift</h2>
-                    <p className="muted">
-                      One shift per person per day — Regular, Sleep, and Waking Night cannot be combined.
-                    </p>
-                  </div>
-                  <label className="field inline">
-                    Week start (Mon)
-                    <input type="date" value={weekStart} onChange={(e) => setWeekStart(e.target.value)} />
-                  </label>
-                </div>
-                <div className="form-grid three">
-                  <label className="field">
-                    Employee
-                    <select
-                      value={rotaForm.employee_id}
-                      onChange={(e) => setRotaForm((f) => ({ ...f, employee_id: e.target.value }))}
-                      required
-                    >
-                      {employees.map((e) => (
-                        <option key={e.id} value={e.id}>
-                          {e.full_name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="field">
-                    Date
-                    <input
-                      type="date"
-                      required
-                      value={rotaForm.shift_date}
-                      onChange={(e) => setRotaForm((f) => ({ ...f, shift_date: e.target.value }))}
-                    />
-                  </label>
-                  <label className="field">
-                    Shift type
-                    <select
-                      value={rotaForm.shift_type}
-                      onChange={(e) =>
-                        setRotaForm((f) => ({ ...f, shift_type: e.target.value as ShiftTypeCode }))
-                      }
-                    >
-                      {clockableTypes.map((t) => (
-                        <option key={t.id} value={t.code}>
-                          {t.display_name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-                <button type="submit" className="btn primary" disabled={!rotaForm.employee_id}>
-                  Add to rota
-                </button>
-              </form>
-
-              <div className="panel">
-                <div className="panel-head">
-                  <div>
-                    <h2>Week rota</h2>
-                    <p className="muted">Week of {fmtDate(weekStart)}</p>
-                  </div>
-                </div>
-                {rota.length === 0 ? (
-                  <div className="empty-state">
-                    <h3>No shifts this week</h3>
-                  </div>
-                ) : (
-                  <div className="table-wrap">
-                    <table className="data-table">
-                      <thead>
-                        <tr>
-                          <th>Employee</th>
-                          <th>Date</th>
-                          <th>Start</th>
-                          <th>End</th>
-                          <th>Type</th>
-                          <th />
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {rota.map((s) => (
-                          <tr key={s.id}>
-                            <td>{s.employee_name}</td>
-                            <td>{fmtDate(s.shift_date)}</td>
-                            <td>{s.start_time.slice(0, 5)}</td>
-                            <td>{s.end_time.slice(0, 5)}</td>
-                            <td>
-                              <span className="badge neutral">{s.shift_type.display_name}</span>
-                            </td>
-                            <td>
-                              <button type="button" className="btn danger sm-btn" onClick={() => onDeleteShift(s.id)}>
-                                Remove
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            </section>
+            <RotaBoard
+              token={token}
+              weekStart={weekStart}
+              onWeekStartChange={setWeekStart}
+              employees={employees}
+              rota={rota}
+              shiftTypes={shiftTypes}
+              onChanged={refresh}
+              onError={showError}
+            />
           )}
 
           {tab === "messages" && (

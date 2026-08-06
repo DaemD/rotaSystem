@@ -53,11 +53,22 @@ def _ensure_one_shift_per_day() -> None:
         )
 
 
+def _ensure_employee_work_hours() -> None:
+    with engine.begin() as conn:
+        conn.execute(
+            text("ALTER TABLE employees ADD COLUMN IF NOT EXISTS work_start TIME NOT NULL DEFAULT '09:00'")
+        )
+        conn.execute(
+            text("ALTER TABLE employees ADD COLUMN IF NOT EXISTS work_end TIME NOT NULL DEFAULT '17:00'")
+        )
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     Base.metadata.create_all(bind=engine)
     _ensure_clock_override_columns()
     _ensure_one_shift_per_day()
+    _ensure_employee_work_hours()
     db = SessionLocal()
     try:
         ensure_shift_types(db)

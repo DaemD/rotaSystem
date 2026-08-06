@@ -22,6 +22,13 @@ class CreateEmployeeIn(BaseModel):
     full_name: str = Field(min_length=1, max_length=255)
     contract_type: str = "full_time"
     max_weekly_hours: int = Field(default=40, ge=1, le=80)
+    work_start: time | None = None
+    work_end: time | None = None
+
+
+class EmployeeHoursIn(BaseModel):
+    work_start: time
+    work_end: time
 
 
 class EmployeeOut(BaseModel):
@@ -31,6 +38,8 @@ class EmployeeOut(BaseModel):
     role: Role
     contract_type: str
     max_weekly_hours: int
+    work_start: time | None = None
+    work_end: time | None = None
     active: bool = True
 
     model_config = {"from_attributes": True}
@@ -164,3 +173,11 @@ class RotaShiftCreateIn(BaseModel):
     shift_type: ShiftTypeCode
     start_time: time | None = None
     end_time: time | None = None
+
+
+class RotaShiftUpsertIn(BaseModel):
+    employee_id: UUID
+    shift_date: date
+    shift_type: ShiftTypeCode
+    start_time: time
+    end_time: time

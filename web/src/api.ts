@@ -47,6 +47,8 @@ export type Employee = {
   role: string;
   contract_type: string;
   max_weekly_hours: number;
+  work_start?: string | null;
+  work_end?: string | null;
   active?: boolean;
 };
 
@@ -198,8 +200,30 @@ export const createRotaShift = (
     end_time?: string;
   },
 ) => request<ScheduledShift>("/admin/rota/shifts", { method: "POST", body: JSON.stringify(body) }, token);
+
+export const upsertRotaShift = (
+  token: string,
+  body: {
+    employee_id: string;
+    shift_date: string;
+    shift_type: ShiftTypeCode;
+    start_time: string;
+    end_time: string;
+  },
+) => request<ScheduledShift>("/admin/rota/shifts", { method: "PUT", body: JSON.stringify(body) }, token);
+
 export const deleteRotaShift = (token: string, id: string) =>
   request<void>(`/admin/rota/shifts/${id}`, { method: "DELETE" }, token);
+
+export const updateEmployeeHours = (
+  token: string,
+  employeeId: string,
+  body: { work_start: string; work_end: string },
+) =>
+  request<Employee>(`/admin/employees/${employeeId}/hours`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  }, token);
 export const getMessageThreads = (token: string) =>
   request<MessageThread[]>("/admin/messages/threads", {}, token);
 export const getAdminThread = (token: string, employeeId: string) =>

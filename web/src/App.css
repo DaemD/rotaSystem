@@ -814,6 +814,140 @@ select:focus {
   min-height: 100vh;
 }
 
+.rota-toolbar {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(140px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.rota-board-wrap {
+  overflow: auto;
+  max-height: 70vh;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  user-select: none;
+}
+
+.rota-board {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  min-width: 900px;
+}
+
+.rota-board th,
+.rota-board td {
+  border-bottom: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+  font-size: 12px;
+  vertical-align: top;
+}
+
+.rota-board thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #f8fafc;
+  padding: 8px;
+  min-width: 120px;
+}
+
+.rota-board .sticky-col {
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  background: #f8fafc;
+  min-width: 64px;
+  text-align: right;
+  padding: 6px 8px;
+}
+
+.rota-board tbody .sticky-col {
+  z-index: 1;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.day-head {
+  display: grid;
+  gap: 6px;
+}
+
+.day-actions {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.rota-cell {
+  height: 34px;
+  padding: 2px;
+  cursor: crosshair;
+  background: #fff;
+}
+
+.rota-cell:hover {
+  background: #f1f5f9;
+}
+
+.rota-cell.mine {
+  background: #dbeafe;
+}
+
+.cell-people {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+
+.cell-people .chip {
+  font-size: 10px;
+  font-weight: 800;
+  border-radius: 4px;
+  padding: 1px 4px;
+  line-height: 1.2;
+}
+
+.cell-people .chip.active {
+  outline: 1px solid currentColor;
+}
+
+.cell-people .chip.more {
+  background: #e2e8f0;
+  color: #475569;
+}
+
+.rota-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  margin-top: 12px;
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.legend-item i {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  display: inline-block;
+}
+
+@media (max-width: 980px) {
+  .rota-toolbar {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
 .mobile-nav.manager {
   grid-template-columns: repeat(3, 1fr);
   max-height: none;
