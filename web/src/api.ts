@@ -20,21 +20,32 @@ async function request<T>(path: string, options: RequestInit = {}, token?: strin
 
   const url = `${API_URL}${path}`;
   const res = await fetch(url, { ...options, headers });
+
+  // DELETE endpoints return 204 with an empty body (no JSON content-type).
+  if (res.status === 204) {
+    if (!res.ok) throw new Error(`Request failed (${res.status})`);
+    return undefined as T;
+  }
+
   const contentType = res.headers.get("content-type") || "";
+  const text = await res.text();
+
+  if (!text) {
+    if (!res.ok) throw new Error(`Request failed (${res.status})`);
+    return undefined as T;
+  }
 
   if (!contentType.includes("application/json")) {
-    const preview = (await res.text()).slice(0, 120);
     throw new Error(
-      `API did not return JSON from ${url}. Set VITE_API_URL to https://your-api.up.railway.app (got: ${preview}...)`,
+      `API did not return JSON from ${url}. Set VITE_API_URL to https://your-api.up.railway.app (got: ${text.slice(0, 120)}...)`,
     );
   }
 
-  const body = await res.json();
+  const body = JSON.parse(text);
   if (!res.ok) {
     const detail = body.detail || JSON.stringify(body);
     throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
   }
-  if (res.status === 204) return undefined as T;
   return body as T;
 }
 

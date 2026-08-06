@@ -47,26 +47,30 @@ function hourCovered(h: number, start: string, end: string) {
 function rangeFromHours(hours: number[]) {
   const sorted = [...new Set(hours)].sort((a, b) => a - b);
   if (!sorted.length) return null;
-  const min = sorted[0];
-  const max = sorted[sorted.length - 1];
-  const wraps = sorted.some((h, i) => i > 0 && h - sorted[i - 1] > 1);
-  if (wraps) {
-    const night = sorted.filter((h) => h >= 12);
-    const morning = sorted.filter((h) => h < 12);
-    if (!night.length || !morning.length) {
-      const endHour = max + 1;
+
+  const gaps: number[] = [];
+  for (let i = 1; i < sorted.length; i++) {
+    if (sorted[i] - sorted[i - 1] > 1) gaps.push(i);
+  }
+
+  // Overnight: exactly one gap between evening hours and morning hours
+  if (gaps.length === 1) {
+    const gi = gaps[0];
+    const morning = sorted.slice(0, gi);
+    const evening = sorted.slice(gi);
+    if (morning.length && evening.length && morning[morning.length - 1] < 12 && evening[0] >= 12) {
+      const startH = evening[0];
+      const endH = morning[morning.length - 1] + 1;
       return {
-        start: `${hourLabel(min)}:00`,
-        end: endHour >= 24 ? "23:59:00" : `${hourLabel(endHour)}:00`,
+        start: `${hourLabel(startH)}:00`,
+        end: endH >= 24 ? "23:59:00" : `${hourLabel(endH)}:00`,
       };
     }
-    const startH = Math.min(...night);
-    const endH = Math.max(...morning) + 1;
-    return {
-      start: `${hourLabel(startH)}:00`,
-      end: endH >= 24 ? "23:59:00" : `${hourLabel(endH)}:00`,
-    };
   }
+
+  // Day block: fill any mid-day holes so we keep one contiguous shift
+  const min = sorted[0];
+  const max = sorted[sorted.length - 1];
   const endHour = max + 1;
   return {
     start: `${hourLabel(min)}:00`,
@@ -104,11 +108,14 @@ export default function RotaBoard({
   );
   const [employeeId, setEmployeeId] = useState(employees[0]?.id || "");
   const [shiftType, setShiftType] = useState<ShiftTypeCode>("regular");
-  const [gridStart, setGridStart] = useState(6);
-  const [gridEnd, setGridEnd] = useState(23); // exclusive display end hour label row end
+  const [gridStart, setGridStart] = useState(0);
+  const [gridEnd, setGridEnd] = useState(24);
   const [busy, setBusy] = useState(false);
   const dragRef = useRef<{ day: string; hours: number[] } | null>(null);
+  const finishingRef = useRef(false);
   const [draft, setDraft] = useState<{ day: string; hours: number[] } | null>(null);
+  // Keep latest finish handler for the window mouseup listener
+  const finishDragRef = useRef<() => void>(() => {});
 
   useEffect(() => {
     if (!employees.length) {
@@ -123,7 +130,8 @@ export default function RotaBoard({
   const days = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)), [weekStart]);
   const hours = useMemo(() => {
     const list: number[] = [];
-    for (let h = gridStart; h < gridEnd; h++) list.push(h);
+    const end = Math.max(gridStart + 1, gridEnd);
+    for (let h = gridStart; h < end; h++) list.push(h);
     return list;
   }, [gridStart, gridEnd]);
 
@@ -134,7 +142,7 @@ export default function RotaBoard({
   const workEnd = (selected?.work_end || "17:00").slice(0, 5);
 
   async function saveHours(start: string, end: string) {
-    if (!selected) return;
+    if (!selected || !start || !end) return;
     try {
       await updateEmployeeHours(token, selected.id, { work_start: start, work_end: end });
       await onChanged();
@@ -143,7 +151,7 @@ export default function RotaBoard({
     }
   }
 
-  async function applyDayHours(day: string, hourList: number[]) {
+  async function applyDayHours(day: string, hourList: number[], type = shiftType) {
     if (!employeeId || !hourList.length) return;
     const range = rangeFromHours(hourList);
     if (!range) return;
@@ -152,7 +160,7 @@ export default function RotaBoard({
       await upsertRotaShift(token, {
         employee_id: employeeId,
         shift_date: day,
-        shift_type: shiftType,
+        shift_type: type,
         start_time: range.start,
         end_time: range.end,
       });
@@ -187,8 +195,45 @@ export default function RotaBoard({
       start = selectedType.default_start.slice(0, 5);
       end = selectedType.default_end.slice(0, 5);
     }
-    const hs = hoursInRange(start + ":00", end + ":00");
-    await applyDayHours(day, hs);
+    if (!start || !end) {
+      onError("Set working hours (or pick Sleep / Waking Night) before filling a day");
+      return;
+    }
+
+    const hs = hoursInRange(`${start}:00`, `${end}:00`);
+    if (!hs.length) {
+      onError("Fill range produced no hours — check work from / work to");
+      return;
+    }
+
+    // Expand grid so overnight fills are visible
+    const minH = Math.min(...hs);
+    const maxH = Math.max(...hs);
+    if (minH < gridStart) setGridStart(minH);
+    if (maxH + 1 > gridEnd) setGridEnd(Math.min(24, maxH + 1));
+
+    const existing = rota.find((r) => r.employee_id === employeeId && r.shift_date === day);
+    setBusy(true);
+    try {
+      // Fill always replaces whatever is on that day for this employee
+      if (existing && existing.shift_type.code !== shiftType) {
+        await deleteRotaShift(token, existing.id);
+      }
+      const range = rangeFromHours(hs);
+      if (!range) return;
+      await upsertRotaShift(token, {
+        employee_id: employeeId,
+        shift_date: day,
+        shift_type: shiftType,
+        start_time: range.start,
+        end_time: range.end,
+      });
+      await onChanged();
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Could not fill day");
+    } finally {
+      setBusy(false);
+    }
   }
 
   function cellPeople(day: string, hour: number) {
@@ -197,11 +242,22 @@ export default function RotaBoard({
     );
   }
 
+  function selectedExisting(day: string) {
+    return rota.find((r) => r.employee_id === employeeId && r.shift_date === day) || null;
+  }
+
   function isSelectedCovered(day: string, hour: number) {
     if (draft && draft.day === day && draft.hours.includes(hour)) return true;
-    const existing = rota.find((r) => r.employee_id === employeeId && r.shift_date === day);
+    const existing = selectedExisting(day);
     if (!existing) return false;
     return hourCovered(hour, existing.start_time, existing.end_time);
+  }
+
+  function cellColor(day: string) {
+    if (draft && draft.day === day) return TYPE_COLOR[shiftType] || "#1f6feb";
+    const existing = selectedExisting(day);
+    if (existing) return TYPE_COLOR[existing.shift_type.code] || "#1f6feb";
+    return TYPE_COLOR[shiftType] || "#1f6feb";
   }
 
   function onPointerDown(day: string, hour: number) {
@@ -215,43 +271,57 @@ export default function RotaBoard({
     const start = dragRef.current.hours[0];
     const lo = Math.min(start, hour);
     const hi = Math.max(start, hour);
-    const hoursSel = [];
+    const hoursSel: number[] = [];
     for (let h = lo; h <= hi; h++) hoursSel.push(h);
     dragRef.current = { day, hours: hoursSel };
     setDraft({ day, hours: hoursSel });
   }
 
-  async function onPointerUp() {
-    if (!dragRef.current) return;
+  async function finishDrag() {
+    if (!dragRef.current || finishingRef.current || busy) return;
     const { day, hours: hs } = dragRef.current;
     dragRef.current = null;
     setDraft(null);
+    finishingRef.current = true;
 
-    const existing = rota.find((r) => r.employee_id === employeeId && r.shift_date === day);
-    // Toggle single cell: if only one hour and already covered, remove it / clear day
-    if (hs.length === 1 && existing && hourCovered(hs[0], existing.start_time, existing.end_time)) {
-      const covered = hoursInRange(existing.start_time, existing.end_time).filter((h) => h !== hs[0]);
-      if (!covered.length) {
+    try {
+      const existing = selectedExisting(day);
+
+      // Single click on an already-filled hour clears the whole day
+      if (hs.length === 1 && existing && hourCovered(hs[0], existing.start_time, existing.end_time)) {
         await clearDay(day);
         return;
       }
-      await applyDayHours(day, covered);
-      return;
-    }
 
-    // Merge with existing hours of same type
-    let merged = [...hs];
-    if (existing) {
-      if (existing.shift_type.code !== shiftType) {
+      if (existing && existing.shift_type.code !== shiftType) {
         onError(
-          `${selected?.full_name || "Employee"} already has ${existing.shift_type.display_name} on ${fmtDate(day)}. Clear the day first.`,
+          `${selected?.full_name || "Employee"} already has ${existing.shift_type.display_name} on ${fmtDate(day)}. Use Clear first, or Fill day to replace.`,
         );
         return;
       }
-      merged = [...new Set([...hoursInRange(existing.start_time, existing.end_time), ...hs])];
+
+      // Merge with existing same-type hours so dragging can extend a block
+      let merged = [...hs];
+      if (existing) {
+        merged = [...new Set([...hoursInRange(existing.start_time, existing.end_time), ...hs])];
+      }
+      await applyDayHours(day, merged);
+    } finally {
+      finishingRef.current = false;
     }
-    await applyDayHours(day, merged);
   }
+
+  finishDragRef.current = () => {
+    void finishDrag();
+  };
+
+  useEffect(() => {
+    function onUp() {
+      finishDragRef.current();
+    }
+    window.addEventListener("mouseup", onUp);
+    return () => window.removeEventListener("mouseup", onUp);
+  }, []);
 
   return (
     <section className="stack">
@@ -296,7 +366,7 @@ export default function RotaBoard({
               type="time"
               value={workStart}
               onChange={(e) => saveHours(e.target.value, workEnd)}
-              disabled={!selected}
+              disabled={!selected || busy}
             />
           </label>
           <label className="field">
@@ -305,12 +375,19 @@ export default function RotaBoard({
               type="time"
               value={workEnd}
               onChange={(e) => saveHours(workStart, e.target.value)}
-              disabled={!selected}
+              disabled={!selected || busy}
             />
           </label>
           <label className="field">
             Grid start
-            <select value={gridStart} onChange={(e) => setGridStart(Number(e.target.value))}>
+            <select
+              value={gridStart}
+              onChange={(e) => {
+                const v = Number(e.target.value);
+                setGridStart(v);
+                if (v >= gridEnd) setGridEnd(Math.min(24, v + 1));
+              }}
+            >
               {Array.from({ length: 24 }, (_, h) => (
                 <option key={h} value={h}>
                   {hourLabel(h)}
@@ -320,10 +397,18 @@ export default function RotaBoard({
           </label>
           <label className="field">
             Grid end
-            <select value={gridEnd} onChange={(e) => setGridEnd(Number(e.target.value))}>
+            <select
+              value={gridEnd}
+              onChange={(e) => {
+                const v = Number(e.target.value);
+                setGridEnd(v);
+                if (v <= gridStart) setGridStart(Math.max(0, v - 1));
+              }}
+            >
               {Array.from({ length: 24 }, (_, h) => (
                 <option key={h + 1} value={h + 1}>
                   {hourLabel(h + 1 === 24 ? 0 : h + 1)}
+                  {h + 1 === 24 ? " (midnight)" : ""}
                 </option>
               ))}
             </select>
@@ -336,7 +421,7 @@ export default function RotaBoard({
             <p>Create staff accounts first.</p>
           </div>
         ) : (
-          <div className="rota-board-wrap" onMouseLeave={() => dragRef.current && onPointerUp()}>
+          <div className="rota-board-wrap">
             <table className="rota-board">
               <thead>
                 <tr>
@@ -346,10 +431,22 @@ export default function RotaBoard({
                       <div className="day-head">
                         <span>{fmtDate(day)}</span>
                         <div className="day-actions">
-                          <button type="button" className="btn sm-btn primary" disabled={busy || !employeeId} onClick={() => fillDay(day)}>
+                          <button
+                            type="button"
+                            className="btn sm-btn primary"
+                            disabled={busy || !employeeId}
+                            onMouseDown={(e) => e.stopPropagation()}
+                            onClick={() => void fillDay(day)}
+                          >
                             Fill day
                           </button>
-                          <button type="button" className="btn sm-btn danger" disabled={busy || !employeeId} onClick={() => clearDay(day)}>
+                          <button
+                            type="button"
+                            className="btn sm-btn danger"
+                            disabled={busy || !employeeId || !selectedExisting(day)}
+                            onMouseDown={(e) => e.stopPropagation()}
+                            onClick={() => void clearDay(day)}
+                          >
                             Clear
                           </button>
                         </div>
@@ -365,7 +462,7 @@ export default function RotaBoard({
                     {days.map((day) => {
                       const people = cellPeople(day, hour);
                       const mine = isSelectedCovered(day, hour);
-                      const color = TYPE_COLOR[shiftType] || "#1f6feb";
+                      const color = cellColor(day);
                       return (
                         <td
                           key={`${day}-${hour}`}
@@ -376,7 +473,6 @@ export default function RotaBoard({
                             onPointerDown(day, hour);
                           }}
                           onMouseEnter={() => onPointerEnter(day, hour)}
-                          onMouseUp={() => onPointerUp()}
                         >
                           <div className="cell-people">
                             {people.slice(0, 3).map((p) => (
@@ -384,7 +480,10 @@ export default function RotaBoard({
                                 key={p.id}
                                 className={`chip ${p.employee_id === employeeId ? "active" : ""}`}
                                 title={`${p.employee_name} · ${p.shift_type.display_name}`}
-                                style={{ background: (TYPE_COLOR[p.shift_type.code] || "#64748b") + "22", color: TYPE_COLOR[p.shift_type.code] || "#334155" }}
+                                style={{
+                                  background: (TYPE_COLOR[p.shift_type.code] || "#64748b") + "22",
+                                  color: TYPE_COLOR[p.shift_type.code] || "#334155",
+                                }}
                               >
                                 {initials(p.employee_name || "?")}
                               </span>
@@ -408,7 +507,9 @@ export default function RotaBoard({
               {t.display_name}
             </span>
           ))}
-          <span className="muted">Tip: click/drag hours for the selected employee. Click a filled hour again to remove it.</span>
+          <span className="muted">
+            Tip: drag to paint / extend. Click a filled hour to clear that day. Fill day replaces the shift.
+          </span>
         </div>
       </div>
     </section>
